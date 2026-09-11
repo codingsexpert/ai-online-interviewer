@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, JSON
 from sqlalchemy.sql import func
-from .database import Base
+from database import Base
 
 class InterviewSession(Base):
     __tablename__ = "interview_sessions"
