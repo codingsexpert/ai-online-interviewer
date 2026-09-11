@@ -12,7 +12,7 @@ import {
 import "@livekit/components-styles";
 import { Track } from "livekit-client";
 import { Loader2, VideoOff } from "lucide-react";
-import Image from "next/image";
+import { SimliClient } from "simli-client";
 
 export default function InterviewRoom() {
   const [token, setToken] = useState("");
@@ -108,8 +108,34 @@ function VideoGrid() {
   ]);
 
   const [volume, setVolume] = useState(0);
+  const simliVideoRef = useRef<HTMLVideoElement>(null);
+  const simliAudioRef = useRef<HTMLAudioElement>(null);
+  const [simliClient, setSimliClient] = useState<SimliClient | null>(null);
 
-  // Audio-reactive visualizer logic
+  const hasSimliKeys = !!process.env.NEXT_PUBLIC_SIMLI_API_KEY;
+
+  useEffect(() => {
+    if (!hasSimliKeys || typeof window === "undefined" || !simliVideoRef.current || !simliAudioRef.current) return;
+    
+    // Initialize Simli Client
+    const client = new SimliClient();
+    client.Initialize({
+      apiKey: process.env.NEXT_PUBLIC_SIMLI_API_KEY || "",
+      faceID: process.env.NEXT_PUBLIC_SIMLI_FACE_ID || "5514e24d-6086-46a3-ace4-6a7264e5cb7c",
+      handleSilence: true,
+      videoRef: simliVideoRef,
+      audioRef: simliAudioRef,
+    });
+    
+    setSimliClient(client);
+    client.start();
+
+    return () => {
+      client.close();
+    };
+  }, [hasSimliKeys]);
+
+  // Audio-reactive visualizer and Simli Audio Pipe
   useEffect(() => {
     // Find the remote audio track (the AI agent's voice)
     const remoteAudio = tracks.find(
@@ -121,12 +147,29 @@ function VideoGrid() {
       if (!mediaStreamTrack) return;
 
       const mediaStream = new MediaStream([mediaStreamTrack]);
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const source = audioContext.createMediaStreamSource(mediaStream);
-      const analyser = audioContext.createAnalyser();
       
+      const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
+      
+      let processor: ScriptProcessorNode | null = null;
+      
+      if (simliClient) {
+        processor = audioContext.createScriptProcessor(4096, 1, 1);
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
+        processor.onaudioprocess = (e) => {
+          const floatData = e.inputBuffer.getChannelData(0);
+          const pcm16 = new Int16Array(floatData.length);
+          for (let i = 0; i < floatData.length; i++) {
+            pcm16[i] = Math.max(-1, Math.min(1, floatData[i])) * 32767;
+          }
+          simliClient.sendAudioData(new Uint8Array(pcm16.buffer));
+        };
+      }
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
       let animationId: number;
@@ -135,7 +178,6 @@ function VideoGrid() {
         analyser.getByteFrequencyData(dataArray);
         const sum = dataArray.reduce((a, b) => a + b, 0);
         const avg = sum / dataArray.length;
-        // Normalize between 0 and 1
         setVolume(Math.min(avg / 100, 1.2));
         animationId = requestAnimationFrame(updateVolume);
       };
@@ -146,16 +188,14 @@ function VideoGrid() {
         cancelAnimationFrame(animationId);
         source.disconnect();
         analyser.disconnect();
+        if (processor) processor.disconnect();
         audioContext.close();
       };
     }
-  }, [tracks]);
+  }, [tracks, simliClient]);
 
   // Separate local camera track
   const localCamera = tracks.find((t) => t.source === Track.Source.Camera && t.participant.isLocal);
-
-  // The AI agent's remote video track (if any)
-  const aiVideo = tracks.find((t) => t.source === Track.Source.Camera && !t.participant.isLocal);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full h-full p-4">
@@ -174,14 +214,23 @@ function VideoGrid() {
         </div>
       </div>
 
-      {/* AI Interviewer Avatar (Audio Reactive Image) */}
+      {/* AI Interviewer Avatar */}
       <div className="relative rounded-2xl overflow-hidden bg-black/40 border border-white/10 flex items-center justify-center aspect-video">
-        {/* If AI has an actual video track, we render it. Otherwise, we show the audio-reactive avatar. */}
-        {aiVideo && aiVideo.publication && !aiVideo.publication.isMuted ? (
-           <VideoTrack trackRef={aiVideo} className="absolute inset-0 w-full h-full object-cover" />
+        
+        {hasSimliKeys ? (
+          // SIMLI REAL VIDEO AVATAR
+          <>
+            <video 
+              ref={simliVideoRef} 
+              autoPlay 
+              playsInline 
+              className="absolute inset-0 w-full h-full object-cover"
+            ></video>
+            <audio ref={simliAudioRef} autoPlay className="hidden"></audio>
+          </>
         ) : (
+          // AUDIO REACTIVE STATIC AVATAR (Fallback)
           <div className="flex flex-col items-center justify-center w-full h-full relative">
-            {/* Pulsing rings based on volume */}
             <div 
               className="absolute w-32 h-32 rounded-full bg-blue-500/20"
               style={{ transform: `scale(${1 + volume * 1.5})`, opacity: Math.max(0.1, volume) }}
@@ -191,7 +240,6 @@ function VideoGrid() {
               style={{ transform: `scale(${1 + volume * 0.8})`, opacity: Math.max(0.2, volume) }}
             ></div>
             
-            {/* Avatar Image */}
             <div 
               className="relative z-10 w-32 h-32 rounded-full overflow-hidden border-4 transition-colors duration-200"
               style={{ borderColor: volume > 0.1 ? '#3b82f6' : 'rgba(255,255,255,0.1)' }}
