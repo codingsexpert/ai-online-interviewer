@@ -11,10 +11,177 @@ import {
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { Track } from "livekit-client";
-import { Loader2, VideoOff } from "lucide-react";
-import { SimliClient } from "simli-client";
+import { Loader2, VideoOff, Mic, MicOff } from "lucide-react";
+
+// Conditionally import HeyGen SDK only if needed
+import StreamingAvatar, { AvatarQuality, StreamingEvents, TaskType, TaskMode } from "@heygen/streaming-avatar";
 
 export default function InterviewRoom() {
+  const hasHeyGenKey = !!process.env.NEXT_PUBLIC_HEYGEN_API_KEY;
+
+  if (hasHeyGenKey) {
+    return <HeyGenInterviewRoom />;
+  } else {
+    return <LiveKitInterviewRoom />;
+  }
+}
+
+// ==========================================
+// HEYGEN INTERACTIVE AVATAR ROOM (TRIAL MODE)
+// ==========================================
+function HeyGenInterviewRoom() {
+  const [avatar, setAvatar] = useState<StreamingAvatar | null>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isRecording, setIsRecording] = useState(false);
+
+  useEffect(() => {
+    async function startHeyGen() {
+      try {
+        setLoading(true);
+        // Initialize HeyGen Streaming Avatar
+        const avatarSdk = new StreamingAvatar({
+          token: process.env.NEXT_PUBLIC_HEYGEN_API_KEY || "",
+        });
+
+        // Listen for video stream
+        avatarSdk.on(StreamingEvents.STREAM_READY, (event) => {
+          setStream(event.detail);
+          if (videoRef.current) {
+            videoRef.current.srcObject = event.detail;
+          }
+        });
+
+        avatarSdk.on(StreamingEvents.STREAM_DISCONNECTED, () => {
+          setStream(null);
+        });
+
+        // Create the avatar session
+        await avatarSdk.createStartAvatar({
+          quality: AvatarQuality.High,
+          avatarName: process.env.NEXT_PUBLIC_HEYGEN_AVATAR_ID || "Wayne_20240711",
+          voice: {
+             voiceId: "1bd001e7e50f421d891986aad5158bc8", // Example male voice
+             rate: 1.0
+          },
+          language: "en",
+        });
+
+        setAvatar(avatarSdk);
+        
+        // Initial greeting using Repeater mode
+        await avatarSdk.speak({
+          text: "Hello, I am Wayne, your AI interviewer. It's a pleasure to meet you. Please introduce yourself.",
+          taskType: TaskType.REPEAT,
+          taskMode: TaskMode.ASYNC,
+        });
+
+        setLoading(false);
+      } catch (err: any) {
+        console.error("HeyGen Setup Error:", err);
+        setError("Failed to start HeyGen Avatar. Please check your API key or token limits.");
+        setLoading(false);
+      }
+    }
+
+    startHeyGen();
+
+    return () => {
+      if (avatar) {
+        avatar.stopAvatar();
+      }
+    };
+  }, []);
+
+  const toggleRecording = async () => {
+    if (!avatar) return;
+    if (isRecording) {
+      await avatar.stopListening();
+      setIsRecording(false);
+    } else {
+      await avatar.startListening();
+      setIsRecording(true);
+    }
+  };
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center text-red-400 p-6 text-center">
+        <div className="max-w-md p-6 border border-red-500/20 bg-red-500/10 rounded-2xl">
+          <h2 className="text-xl font-bold mb-2">HeyGen Error</h2>
+          <p>{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center text-white">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-500 mb-4" />
+        <p className="text-gray-400 animate-pulse">Initializing HeyGen Interactive Avatar...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-black text-white p-4">
+      <div className="flex flex-col h-full bg-neutral-900 rounded-2xl overflow-hidden" style={{ height: "calc(100vh - 32px)" }}>
+        {/* Header */}
+        <div className="h-16 px-6 flex items-center justify-between border-b border-white/10 bg-black/50">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+            <span className="font-medium">HeyGen Interview Room</span>
+          </div>
+        </div>
+
+        {/* Video Grid */}
+        <div className="flex-1 p-4 flex items-center justify-center relative">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full h-full">
+            
+            {/* HeyGen Avatar Video */}
+            <div className="relative rounded-2xl overflow-hidden bg-black/40 border border-white/10 flex items-center justify-center aspect-video">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+              <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1 rounded-lg border border-white/10 text-sm font-medium flex items-center gap-2">
+                Wayne (AI Interviewer)
+              </div>
+            </div>
+
+            {/* User Audio Control Panel (HeyGen doesn't natively mirror your camera easily without separate getUserMedia, so we just show mic status) */}
+            <div className="relative rounded-2xl overflow-hidden bg-black/40 border border-white/10 flex flex-col items-center justify-center aspect-video">
+              <div className="text-gray-400 mb-4 text-center px-4">
+                Click the microphone to talk to the Avatar. HeyGen will listen, process your speech, and reply.
+              </div>
+              <button 
+                onClick={toggleRecording}
+                className={`p-6 rounded-full transition-all ${isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-blue-500 hover:bg-blue-600'}`}
+              >
+                {isRecording ? <Mic className="w-8 h-8 text-white" /> : <MicOff className="w-8 h-8 text-white" />}
+              </button>
+              <div className="mt-4 font-medium text-white">
+                {isRecording ? "Listening..." : "Microphone Off"}
+              </div>
+            </div>
+            
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ==========================================
+// LIVEKIT INTERVIEW ROOM (FREE AUDIO-REACTIVE FALLBACK)
+// ==========================================
+function LiveKitInterviewRoom() {
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
 
@@ -66,7 +233,6 @@ export default function InterviewRoom() {
         style={{ height: "calc(100vh - 32px)", borderRadius: "16px", overflow: "hidden" }}
       >
         <div className="flex flex-col h-full bg-neutral-900">
-          {/* Header */}
           <div className="h-16 px-6 flex items-center justify-between border-b border-white/10 bg-black/50">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
@@ -74,17 +240,12 @@ export default function InterviewRoom() {
             </div>
             <ConnectionStatus />
           </div>
-
-          {/* Video Grid */}
           <div className="flex-1 p-4 flex items-center justify-center relative">
-            <VideoGrid />
+            <LiveKitVideoGrid />
           </div>
-
-          {/* Control Bar */}
           <div className="bg-black/50 p-4 flex justify-center">
              <ControlBar />
           </div>
-          
           <RoomAudioRenderer />
         </div>
       </LiveKitRoom>
@@ -101,43 +262,15 @@ function ConnectionStatus() {
   );
 }
 
-function VideoGrid() {
+function LiveKitVideoGrid() {
   const tracks = useTracks([
     { source: Track.Source.Camera, withPlaceholder: true },
     { source: Track.Source.Microphone, withPlaceholder: false }
   ]);
 
   const [volume, setVolume] = useState(0);
-  const simliVideoRef = useRef<HTMLVideoElement>(null);
-  const simliAudioRef = useRef<HTMLAudioElement>(null);
-  const [simliClient, setSimliClient] = useState<SimliClient | null>(null);
-
-  const hasSimliKeys = !!process.env.NEXT_PUBLIC_SIMLI_API_KEY;
 
   useEffect(() => {
-    if (!hasSimliKeys || typeof window === "undefined" || !simliVideoRef.current || !simliAudioRef.current) return;
-    
-    // Initialize Simli Client
-    const client = new SimliClient();
-    client.Initialize({
-      apiKey: process.env.NEXT_PUBLIC_SIMLI_API_KEY || "",
-      faceID: process.env.NEXT_PUBLIC_SIMLI_FACE_ID || "5514e24d-6086-46a3-ace4-6a7264e5cb7c",
-      handleSilence: true,
-      videoRef: simliVideoRef,
-      audioRef: simliAudioRef,
-    });
-    
-    setSimliClient(client);
-    client.start();
-
-    return () => {
-      client.close();
-    };
-  }, [hasSimliKeys]);
-
-  // Audio-reactive visualizer and Simli Audio Pipe
-  useEffect(() => {
-    // Find the remote audio track (the AI agent's voice)
     const remoteAudio = tracks.find(
       (t) => t.source === Track.Source.Microphone && t.participant.isLocal === false
     );
@@ -147,29 +280,12 @@ function VideoGrid() {
       if (!mediaStreamTrack) return;
 
       const mediaStream = new MediaStream([mediaStreamTrack]);
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const source = audioContext.createMediaStreamSource(mediaStream);
-      
       const analyser = audioContext.createAnalyser();
+      
       analyser.fftSize = 256;
       source.connect(analyser);
-      
-      let processor: ScriptProcessorNode | null = null;
-      
-      if (simliClient) {
-        processor = audioContext.createScriptProcessor(4096, 1, 1);
-        source.connect(processor);
-        processor.connect(audioContext.destination);
-
-        processor.onaudioprocess = (e) => {
-          const floatData = e.inputBuffer.getChannelData(0);
-          const pcm16 = new Int16Array(floatData.length);
-          for (let i = 0; i < floatData.length; i++) {
-            pcm16[i] = Math.max(-1, Math.min(1, floatData[i])) * 32767;
-          }
-          simliClient.sendAudioData(new Uint8Array(pcm16.buffer));
-        };
-      }
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
       let animationId: number;
@@ -188,18 +304,16 @@ function VideoGrid() {
         cancelAnimationFrame(animationId);
         source.disconnect();
         analyser.disconnect();
-        if (processor) processor.disconnect();
         audioContext.close();
       };
     }
-  }, [tracks, simliClient]);
+  }, [tracks]);
 
-  // Separate local camera track
   const localCamera = tracks.find((t) => t.source === Track.Source.Camera && t.participant.isLocal);
+  const aiVideo = tracks.find((t) => t.source === Track.Source.Camera && !t.participant.isLocal);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full h-full p-4">
-      {/* Local User Camera */}
       <div className="relative rounded-2xl overflow-hidden bg-black/40 border border-white/10 flex items-center justify-center aspect-video">
         {localCamera && localCamera.publication && !localCamera.publication.isMuted ? (
           <VideoTrack trackRef={localCamera} className="absolute inset-0 w-full h-full object-cover" />
@@ -214,22 +328,10 @@ function VideoGrid() {
         </div>
       </div>
 
-      {/* AI Interviewer Avatar */}
       <div className="relative rounded-2xl overflow-hidden bg-black/40 border border-white/10 flex items-center justify-center aspect-video">
-        
-        {hasSimliKeys ? (
-          // SIMLI REAL VIDEO AVATAR
-          <>
-            <video 
-              ref={simliVideoRef} 
-              autoPlay 
-              playsInline 
-              className="absolute inset-0 w-full h-full object-cover"
-            ></video>
-            <audio ref={simliAudioRef} autoPlay className="hidden"></audio>
-          </>
+        {aiVideo && aiVideo.publication && !aiVideo.publication.isMuted ? (
+           <VideoTrack trackRef={aiVideo} className="absolute inset-0 w-full h-full object-cover" />
         ) : (
-          // AUDIO REACTIVE STATIC AVATAR (Fallback)
           <div className="flex flex-col items-center justify-center w-full h-full relative">
             <div 
               className="absolute w-32 h-32 rounded-full bg-blue-500/20"
@@ -239,7 +341,6 @@ function VideoGrid() {
               className="absolute w-32 h-32 rounded-full bg-blue-500/40"
               style={{ transform: `scale(${1 + volume * 0.8})`, opacity: Math.max(0.2, volume) }}
             ></div>
-            
             <div 
               className="relative z-10 w-32 h-32 rounded-full overflow-hidden border-4 transition-colors duration-200"
               style={{ borderColor: volume > 0.1 ? '#3b82f6' : 'rgba(255,255,255,0.1)' }}
@@ -253,7 +354,6 @@ function VideoGrid() {
             </div>
           </div>
         )}
-        
         <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1 rounded-lg border border-white/10 text-sm font-medium flex items-center gap-2">
           Sam (AI Interviewer)
           <span 
