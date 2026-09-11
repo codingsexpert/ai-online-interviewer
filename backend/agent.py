@@ -4,7 +4,7 @@ import logging
 from dotenv import load_dotenv
 
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, llm
-from livekit.agents.pipeline import VoicePipelineAgent
+from livekit.agents.voice import Agent
 from livekit.plugins import deepgram, openai, silero
 
 # Load environment variables
@@ -34,20 +34,17 @@ async def entrypoint(ctx: JobContext):
     # TTS: OpenAI TTS (or you can swap for ElevenLabs later)
     # VAD: Silero (Voice Activity Detection)
     
-    agent = VoicePipelineAgent(
+    agent = Agent(
         vad=silero.VAD.load(),
         stt=deepgram.STT(),
         llm=openai.LLM(model="gpt-4o"),
         tts=openai.TTS(),
-        chat_ctx=llm.ChatContext().append(
-            role="system",
-            text=(
-                "You are an expert technical interviewer conducting an online interview. "
-                "Your name is Sam. You should act professional, friendly, but rigorous. "
-                "Ask technical questions related to software engineering, listen to the candidate's answers, "
-                "and ask follow-up questions. Keep your responses concise since this is a voice conversation. "
-                "Start by introducing yourself and asking the candidate to introduce themselves."
-            ),
+        instructions=(
+            "You are an expert technical interviewer conducting an online interview. "
+            "Your name is Sam. You should act professional, friendly, but rigorous. "
+            "Ask technical questions related to software engineering, listen to the candidate's answers, "
+            "and ask follow-up questions. Keep your responses concise since this is a voice conversation. "
+            "Start by introducing yourself and asking the candidate to introduce themselves."
         ),
     )
 
