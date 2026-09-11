@@ -2,7 +2,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from livekit import api
 import os
+from dotenv import load_dotenv
 from pydantic import BaseModel
+
+load_dotenv()
 from sqlalchemy.orm import Session
 from fastapi import Depends
 
